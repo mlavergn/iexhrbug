@@ -1,17 +1,29 @@
 <script>
 	function log(message) {
-		document.getElementById('message').innerText += (message + '\r\n');
+		document.getElementById('message').appendChild(document.createTextNode(message + '\r\n'));
 	}
-
-	function send() {
+	function report(payloads, bytes, chunks) {
 		const xhr = new XMLHttpRequest();
-		xhr.open('GET', '/data');
+		xhr.open('POST', '/report');
+		const payload = {
+			payloads: payloads,
+			bytes: bytes,
+			chunks: chunks
+		}
+		console.log(payload);
+		xhr.send(JSON.stringify(payload));
+	}
+	function send(payloads, pauseAt) {
+		const xhr = new XMLHttpRequest();
+		xhr.open('GET', '/events?payloads=' + payloads + '&pauseAt=' + pauseAt);
 		xhr.setRequestHeader('Accept', 'text/event-stream');
-		xhr.onerror = function(error) {
+		xhr.onerror = function (error) {
 			log('Error: ' + error.statusText);
 		};
-		xhr.onreadystatechange = function() {
-			switch(xhr.readyState) {
+		var chunks = 0
+		var reportat = 10
+		xhr.onreadystatechange = function () {
+			switch (xhr.readyState) {
 				case XMLHttpRequest.UNSENT:
 					log('UNSENT status ' + xhr.status + ' ' + xhr.statusText);
 					break;
@@ -22,7 +34,24 @@
 					log('HEADERS_RECEIVED status ' + xhr.status + ' ' + xhr.statusText);
 					break;
 				case XMLHttpRequest.LOADING:
-					log('LOADING read ' + xhr.responseText.length);
+					chunks += 1
+					// log('LOADING read ' + xhr.responseText.length);
+					reportat--;
+					if (reportat === 0) {
+						var textLength = xhr.responseText.length;
+						const start = xhr.responseText.slice(0, textLength - 2).lastIndexOf('\n\n') + 2
+						const data = xhr.responseText.slice(start, textLength - 2).split('\n');
+						const payload = {};
+						data.forEach((v) => {
+							const sep = v.indexOf(':')
+							payload[v.slice(0, sep)] = v.slice(sep + 1);
+						});
+						payload.data = JSON.parse(payload.data);
+						payload.lastEventId = Number(payload.lastEventId);
+						report(payload.lastEventId, xhr.responseText.length, chunks);
+						reportat = 10;
+						log('LOADING chunks: [' + chunks + '] bytes: [' + xhr.responseText.length + '] payloads: [' + payload.lastEventId + ']');
+					}
 					break;
 				case XMLHttpRequest.DONE:
 					log('DONE status ' + xhr.status + ' ' + xhr.statusText);
@@ -38,6 +67,11 @@
 </script>
 
 <body>
-	<input type="button" onclick="send()" value="Start"/><hr/>
+	<input type="text" id="payloads" value="5000000" />
+	<input type="text" id="pauseAt" value="100" />
+	<input type="button"
+		onclick="send(document.getElementById('payloads').value, document.getElementById('pauseAt').value)"
+		value="Start" />
+	<hr />
 	<pre id="message"></pre>
 </body>

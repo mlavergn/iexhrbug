@@ -1,0 +1,43 @@
+<script>
+	function log(message) {
+		document.getElementById('message').innerText += (message + '\r\n');
+	}
+
+	function send() {
+		const xhr = new XMLHttpRequest();
+		xhr.open('GET', '/data');
+		xhr.setRequestHeader('Accept', 'text/event-stream');
+		xhr.onerror = function(error) {
+			log('Error: ' + error.statusText);
+		};
+		xhr.onreadystatechange = function() {
+			switch(xhr.readyState) {
+				case XMLHttpRequest.UNSENT:
+					log('UNSENT status ' + xhr.status + ' ' + xhr.statusText);
+					break;
+				case XMLHttpRequest.OPENED:
+					log('OPENED status ' + xhr.status + ' ' + xhr.statusText);
+					break;
+				case XMLHttpRequest.HEADERS_RECEIVED:
+					log('HEADERS_RECEIVED status ' + xhr.status + ' ' + xhr.statusText);
+					break;
+				case XMLHttpRequest.LOADING:
+					log('LOADING read ' + xhr.responseText.length);
+					break;
+				case XMLHttpRequest.DONE:
+					log('DONE status ' + xhr.status + ' ' + xhr.statusText);
+					log('Response type: ' + xhr.responseType);
+					log('Response length: ' + xhr.responseText.length);
+					break;
+				default:
+					log('*other* status ' + xhr.status + ' ' + xhr.statusText);
+			}
+		};
+		xhr.send();
+	}
+</script>
+
+<body>
+	<input type="button" onclick="send()" value="Start"/><hr/>
+	<pre id="message"></pre>
+</body>

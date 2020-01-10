@@ -39,13 +39,15 @@ https://github.com/angular/angular/blob/6.0.x/packages/common/http/src/xhr.ts#L2
 if (req.responseType === 'text' && !!xhr.responseText) {
 +  try {
      progressEvent.partialText = xhr.responseText;
+     // Finally, fire the event.
+     observer.next(progressEvent);
 +  } catch (error) {
-+  const res = new HttpErrorResponse({
-+    error,
-+    status: 413, // use 413 - Request Entity Too Large
-+    statusText: 'IE11 Not enough storage is available to complete this operation',
-+  });
-+  observer.error(res);
++    const res = new HttpErrorResponse({
++      error,
++      status: 413, // use 413 - Request Entity Too Large
++      statusText: 'IE11 Not enough storage is available to complete this operation',
++    });
++    observer.error(res);
 +  }
 }
 ```

@@ -1,20 +1,23 @@
 package main
 
 import (
-	"archive/zip"
-	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mlavergn/gopack/src/gopack"
 )
+
+// TestCase export
+type TestCase struct {
+	Pack *gopack.Pack
+}
 
 // EventSourcePayload type
 type EventSourcePayload struct {
@@ -25,19 +28,27 @@ type EventSourcePayload struct {
 	LastEventID int64
 }
 
-func handlerStatic(resp http.ResponseWriter, req *http.Request) {
+func (id *TestCase) handlerStatic(resp http.ResponseWriter, req *http.Request) {
 	// fmt.Println("handlerStatic")
 	resp.Header().Set("Access-Control-Allow-Origin", "*")
 	resp.Header().Set("Content-Type", "text/html")
 	resp.Header().Set("Cache-Control", "no-cache")
 	resp.WriteHeader(http.StatusOK)
 
-	file, err := os.Open("index.html")
+	var file io.Reader
+	var err error
+	if id.Pack != nil {
+		file, err = id.Pack.Pipe("index.html")
+	} else {
+		ffile, ferr := os.Open("index.html")
+		defer ffile.Close()
+		file = ffile
+		err = ferr
+	}
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	defer file.Close()
 
 	_, err = io.Copy(resp, file)
 	if err != nil {
@@ -46,7 +57,7 @@ func handlerStatic(resp http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func handlerData(resp http.ResponseWriter, req *http.Request) {
+func (id *TestCase) handlerData(resp http.ResponseWriter, req *http.Request) {
 	// fmt.Println("handlerData")
 	resp.Header().Set("Access-Control-Allow-Origin", "*")
 	resp.Header().Set("Content-Type", "text/event-stream")
@@ -96,7 +107,7 @@ func handlerData(resp http.ResponseWriter, req *http.Request) {
 		resp.Write(data)
 		time.Sleep(10 * time.Millisecond)
 		flusher.Flush()
-		updateSpinner(&frame)
+		id.updateSpinner(&frame)
 
 		pause -= payloadLen
 		if pause <= 0 {
@@ -117,7 +128,7 @@ type Report struct {
 	BrowserTime int `json:"browserTime"`
 }
 
-func handlerReport(resp http.ResponseWriter, req *http.Request) {
+func (id *TestCase) handlerReport(resp http.ResponseWriter, req *http.Request) {
 	// fmt.Println("handlerReport")
 	resp.WriteHeader(http.StatusOK)
 
@@ -126,7 +137,7 @@ func handlerReport(resp http.ResponseWriter, req *http.Request) {
 
 	var report Report
 	json.Unmarshal(data, &report)
-	agent := parseAgent(req.UserAgent())
+	agent := id.parseAgent(req.UserAgent())
 	fmt.Println("Agent: ", agent, " | Buffer: ", report.Bytes, " bytes | Lag: ", report.BrowserTime-report.PayloadTime, " ms")
 
 	resp.Write([]byte("OK"))
@@ -139,7 +150,7 @@ type Bug struct {
 	BrowserTime int    `json:"browserTime"`
 }
 
-func handlerBug(resp http.ResponseWriter, req *http.Request) {
+func (id *TestCase) handlerBug(resp http.ResponseWriter, req *http.Request) {
 	// fmt.Println("handlerReport")
 	resp.WriteHeader(http.StatusOK)
 
@@ -148,13 +159,13 @@ func handlerBug(resp http.ResponseWriter, req *http.Request) {
 
 	var bug Bug
 	json.Unmarshal(data, &bug)
-	agent := parseAgent(req.UserAgent())
+	agent := id.parseAgent(req.UserAgent())
 	fmt.Println("!!!EXCEPTION!!! Agent: ", agent, " | Error: ", bug.Error, "Buffer: ", bug.Bytes, " bytes | Time: ", bug.BrowserTime, " ms")
 
 	resp.Write([]byte("OK"))
 }
 
-func parseAgent(userAgent string) string {
+func (id *TestCase) parseAgent(userAgent string) string {
 	moz13 := userAgent[13:]
 	if strings.Contains(moz13, "Trident/") {
 		return "IE"
@@ -173,7 +184,7 @@ func parseAgent(userAgent string) string {
 
 var spinner = []string{"◒", "◑", "◓", "◐"}
 
-func updateSpinner(frame *int) {
+func (id *TestCase) updateSpinner(frame *int) {
 	print("\b\b", spinner[*frame])
 	*frame++
 	if *frame >= len(spinner) {
@@ -181,74 +192,22 @@ func updateSpinner(frame *int) {
 	}
 }
 
-func extractPacked(executableName string) {
-	file, _ := os.Open(executableName)
-	defer file.Close()
-
-	// read the packed length
-	file.Seek(-10, 2)
-	offsetBuffer := make([]byte, 10)
-	readLen, readErr := file.Read(offsetBuffer)
-	if readLen != 10 || readErr != nil {
-		fmt.Println("Failed to read packed length")
-		return
-	}
-
-	// convert packed length
-	packLen, contentErr := strconv.Atoi(string(offsetBuffer))
-	if contentErr != nil {
-		fmt.Println("Failed to convert packed length")
-		return
-	}
-
-	// read the packed data
-	packOffset := int64((packLen + 10) * -1)
-	file.Seek(packOffset, 2)
-	packBuffer := make([]byte, packLen)
-	readLen, readErr = file.Read(packBuffer)
-	if readLen != packLen || readErr != nil {
-		fmt.Println("Failed to read packed data")
-		return
-	}
-
-	// unzip the packed data
-	zipReader, zipErr := zip.NewReader(bytes.NewReader(packBuffer), int64(packLen))
-	if zipErr != nil {
-		fmt.Println("Failed to unzip packed data", zipErr)
-		return
-	}
-	for _, zipFile := range zipReader.File {
-		fmt.Println("Extracting: ", zipFile.Name)
-		dirPath, _ := filepath.Split(zipFile.Name)
-		if len(dirPath) > 0 {
-			os.MkdirAll(dirPath, os.ModeDir|0770)
-		}
-		dest, destErr := os.Create(zipFile.Name)
-		if destErr != nil {
-			fmt.Println("Failed to extract", zipFile.Name, destErr)
-			return
-		}
-		defer dest.Close()
-		src, _ := zipFile.Open()
-		defer src.Close()
-		io.Copy(dest, src)
-	}
-}
-
 func main() {
 	fmt.Println("IE11 bug proof of concept")
 
-	installPtr := flag.Bool("install", false, "Install packed content")
-	flag.Parse()
+	tc := &TestCase{}
 
-	if *installPtr {
-		extractPacked("main")
+	pack := gopack.NewPack()
+	_, err := pack.Load()
+	if err == nil {
+		fmt.Println("Found packed assets")
+		tc.Pack = pack
 	}
 
-	http.Handle("/", http.HandlerFunc(handlerStatic))
-	http.Handle("/events", http.HandlerFunc(handlerData))
-	http.Handle("/report", http.HandlerFunc(handlerReport))
-	http.Handle("/bug", http.HandlerFunc(handlerBug))
+	http.Handle("/", http.HandlerFunc(tc.handlerStatic))
+	http.Handle("/events", http.HandlerFunc(tc.handlerData))
+	http.Handle("/report", http.HandlerFunc(tc.handlerReport))
+	http.Handle("/bug", http.HandlerFunc(tc.handlerBug))
 
 	// Start the server and listen forever on port 8000.
 	http.ListenAndServe(":8000", nil)

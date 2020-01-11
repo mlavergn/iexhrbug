@@ -1,12 +1,16 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -167,10 +171,6 @@ func parseAgent(userAgent string) string {
 	return moz13[strings.LastIndex(moz13, " ")+1:]
 }
 
-// var spinnerX = []string{"⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘", "⢃⠨", "⡃⢐", "⠍⡐", "⢋⠠", "⡋⢀", "⠍⡁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⠈⠩", "⠀⢙", "⠀⡙", "⠀⠩", "⠀⢘", "⠀⡘", "⠀⠨", "⠀⢐", "⠀⡐", "⠀⠠", "⠀⢀", "⠀⡀"}
-
-// var spinner = []string{"🕛", "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚"}
-
 var spinner = []string{"◒", "◑", "◓", "◐"}
 
 func updateSpinner(frame *int) {
@@ -181,8 +181,69 @@ func updateSpinner(frame *int) {
 	}
 }
 
+func extractPacked(executableName string) {
+	file, _ := os.Open(executableName)
+	defer file.Close()
+
+	// read the packed length
+	file.Seek(-10, 2)
+	offsetBuffer := make([]byte, 10)
+	readLen, readErr := file.Read(offsetBuffer)
+	if readLen != 10 || readErr != nil {
+		fmt.Println("Failed to read packed length")
+		return
+	}
+
+	// convert packed length
+	packLen, contentErr := strconv.Atoi(string(offsetBuffer))
+	if contentErr != nil {
+		fmt.Println("Failed to convert packed length")
+		return
+	}
+
+	// read the packed data
+	packOffset := int64((packLen + 10) * -1)
+	file.Seek(packOffset, 2)
+	packBuffer := make([]byte, packLen)
+	readLen, readErr = file.Read(packBuffer)
+	if readLen != packLen || readErr != nil {
+		fmt.Println("Failed to read packed data")
+		return
+	}
+
+	// unzip the packed data
+	zipReader, zipErr := zip.NewReader(bytes.NewReader(packBuffer), int64(packLen))
+	if zipErr != nil {
+		fmt.Println("Failed to unzip packed data", zipErr)
+		return
+	}
+	for _, zipFile := range zipReader.File {
+		fmt.Println("Extracting: ", zipFile.Name)
+		dirPath, _ := filepath.Split(zipFile.Name)
+		if len(dirPath) > 0 {
+			os.MkdirAll(dirPath, os.ModeDir|0770)
+		}
+		dest, destErr := os.Create(zipFile.Name)
+		if destErr != nil {
+			fmt.Println("Failed to extract", zipFile.Name, destErr)
+			return
+		}
+		defer dest.Close()
+		src, _ := zipFile.Open()
+		defer src.Close()
+		io.Copy(dest, src)
+	}
+}
+
 func main() {
 	fmt.Println("IE11 bug proof of concept")
+
+	installPtr := flag.Bool("install", false, "Install packed content")
+	flag.Parse()
+
+	if *installPtr {
+		extractPacked("main")
+	}
 
 	http.Handle("/", http.HandlerFunc(handlerStatic))
 	http.Handle("/events", http.HandlerFunc(handlerData))

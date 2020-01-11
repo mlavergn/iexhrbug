@@ -1,76 +1,114 @@
-<script>
-	function log(message) {
-		document.getElementById('message').appendChild(document.createTextNode(message + '\r\n'));
-	}
-	function report(payloads, bytes, chunks) {
-		const xhr = new XMLHttpRequest();
-		xhr.open('POST', '/report');
-		const payload = {
-			payloads: payloads,
-			bytes: bytes,
-			chunks: chunks
+<!DOCTYPE html>
+
+<head>
+	<script>
+		function log(message) {
+			document.getElementById('message').appendChild(document.createTextNode(message + '\r\n'));
+			console.log(message);
 		}
-		console.log(payload);
-		xhr.send(JSON.stringify(payload));
-	}
-	function send(payloads, pauseAt) {
-		const xhr = new XMLHttpRequest();
-		xhr.open('GET', '/events?payloads=' + payloads + '&pauseAt=' + pauseAt);
-		xhr.setRequestHeader('Accept', 'text/event-stream');
-		xhr.onerror = function (error) {
-			log('Error: ' + error.statusText);
-		};
-		var chunks = 0
-		var reportat = 10
-		xhr.onreadystatechange = function () {
-			switch (xhr.readyState) {
-				case XMLHttpRequest.UNSENT:
-					log('UNSENT status ' + xhr.status + ' ' + xhr.statusText);
-					break;
-				case XMLHttpRequest.OPENED:
-					log('OPENED status ' + xhr.status + ' ' + xhr.statusText);
-					break;
-				case XMLHttpRequest.HEADERS_RECEIVED:
-					log('HEADERS_RECEIVED status ' + xhr.status + ' ' + xhr.statusText);
-					break;
-				case XMLHttpRequest.LOADING:
-					chunks += 1
-					// log('LOADING read ' + xhr.responseText.length);
-					reportat--;
-					if (reportat === 0) {
-						var textLength = xhr.responseText.length;
-						const start = xhr.responseText.slice(0, textLength - 2).lastIndexOf('\n\n') + 2
-						const data = xhr.responseText.slice(start, textLength - 2).split('\n');
+		function bug(error,  bytes) {
+			const xhr = new XMLHttpRequest();
+			xhr.open('POST', '/bug');
+			const payload = {
+				error: error,
+				bytes: bytes,
+				browserTime: Date.now()
+			}
+			log(JSON.stringify(payload));
+			xhr.send(JSON.stringify(payload));
+		}
+		function report(bytes, chunks, lastEventId) {
+			const xhr = new XMLHttpRequest();
+			xhr.open('POST', '/report');
+			const payload = {
+				bytes: bytes,
+				chunks: chunks,
+				payloadTime: lastEventId,
+				browserTime: Date.now()
+			}
+			log(JSON.stringify(payload));
+			xhr.send(JSON.stringify(payload));
+		}
+		function send(sendBytes, pauseAfter) {
+			const xhr = new XMLHttpRequest();
+			xhr.open('GET', '/events?sendBytes=' + sendBytes + '&pauseAfter=' + pauseAfter);
+			xhr.setRequestHeader('Accept', 'text/event-stream');
+			xhr.onerror = function (error) {
+				log('Error: ' + error.statusText);
+			};
+			var lastBufferLength = 0;
+			var chunks = 0;
+			var reportat = 512 * 1024;
+			xhr.onreadystatechange = function () {
+				switch (xhr.readyState) {
+					case XMLHttpRequest.UNSENT:
+						log('UNSENT status ' + xhr.status + ' ' + xhr.statusText);
+						break;
+					case XMLHttpRequest.OPENED:
+						log('OPENED status ' + xhr.status + ' ' + xhr.statusText);
+						break;
+					case XMLHttpRequest.HEADERS_RECEIVED:
+						log('HEADERS_RECEIVED status ' + xhr.status + ' ' + xhr.statusText);
+						break;
+					case XMLHttpRequest.LOADING:
+						chunks += 1
+						// log('LOADING read ' + xhr.responseText.length);
+						var patialText;
+						try {
+							patialText = xhr.responseText;
+						} catch (error) {
+							bug(error.message, lastBufferLength);
+							break;
+						}
+						var textLength = patialText.length;
+						lastBufferLength = textLength
+						const end = patialText.slice(0, textLength - 2).lastIndexOf('\n\n') + 2
+						const start = patialText.slice(0, end - 2).lastIndexOf('\n\n') + 2
+						const data = patialText.slice(start, end - 2).split('\n');
 						const payload = {};
-						data.forEach((v) => {
+						for (i = 0; i < data.length; i++) {
+							const v = data[i]
 							const sep = v.indexOf(':')
 							payload[v.slice(0, sep)] = v.slice(sep + 1);
-						});
-						payload.data = JSON.parse(payload.data);
+						}
+						try {
+							payload.data = JSON.parse(payload.data);
+						} catch (error) {
+							log(error);
+							return;
+						}
 						payload.lastEventId = Number(payload.lastEventId);
-						report(payload.lastEventId, xhr.responseText.length, chunks);
-						reportat = 10;
-						log('LOADING chunks: [' + chunks + '] bytes: [' + xhr.responseText.length + '] payloads: [' + payload.lastEventId + ']');
-					}
-					break;
-				case XMLHttpRequest.DONE:
-					log('DONE status ' + xhr.status + ' ' + xhr.statusText);
-					log('Response type: ' + xhr.responseType);
-					log('Response length: ' + xhr.responseText.length);
-					break;
-				default:
-					log('*other* status ' + xhr.status + ' ' + xhr.statusText);
-			}
-		};
-		xhr.send();
-	}
-</script>
+						if (patialText.length >= reportat) {
+							report(patialText.length, chunks, payload.lastEventId);
+							reportat += (512 * 1024);
+						}
+						break;
+					case XMLHttpRequest.DONE:
+						log('DONE status ' + xhr.status + ' ' + xhr.statusText);
+						log('Response type: ' + xhr.responseType);
+						log('Response length: ' + xhr.responseText.length);
+						break;
+					default:
+						log('*other* status ' + xhr.status + ' ' + xhr.statusText);
+				}
+			};
+			xhr.send();
+		}
+	</script>
+	<style>
+		.pre {
+			font-family: monospace;
+			text-align: right;
+		}
+	</style>
+</head>
 
 <body>
-	<input type="text" id="payloads" value="5000000" />
-	<input type="text" id="pauseAt" value="100" />
+	<label class="pre">Send X bytes (dflt: 64MB)</label><input class="pre" type="text" id="sendBytes"
+		value="67108864" />
+	<label class="pre">Pause after X bytes sent</label><input class="pre" type="text" id="pauseAfter" value="10240" />
 	<input type="button"
-		onclick="send(document.getElementById('payloads').value, document.getElementById('pauseAt').value)"
+		onclick="send(document.getElementById('sendBytes').value, document.getElementById('pauseAfter').value)"
 		value="Start" />
 	<hr />
 	<pre id="message"></pre>

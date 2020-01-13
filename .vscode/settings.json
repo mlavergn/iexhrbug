@@ -1,4 +1,3 @@
 {
 	"go.inferGopath": false,
-	"go.gopath": "${workspaceFolder}:${env:HOME}/go"
 }

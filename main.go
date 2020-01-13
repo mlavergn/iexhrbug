@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	gopack "github.com/mlavergn/gopack/src/gopack"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -10,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mlavergn/gopack/src/gopack"
 )
 
 // TestCase export
@@ -210,5 +209,14 @@ func main() {
 	http.Handle("/bug", http.HandlerFunc(tc.handlerBug))
 
 	// Start the server and listen forever on port 8000.
-	http.ListenAndServe(":8000", nil)
+	// http.ListenAndServe(":8000", nil)
+
+	cert, _ := pack.File("iexhr.crt")
+	defer os.Remove(*cert)
+	key, _ := pack.File("iexhr.key")
+	defer os.Remove(*key)
+	err = http.ListenAndServeTLS(":8000", *cert, *key, nil)
+	if err != nil {
+		fmt.Println("Failed to start listener", err)
+	}
 }

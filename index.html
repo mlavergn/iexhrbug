@@ -58,7 +58,7 @@
 							patialText = xhr.responseText;
 						} catch (error) {
 							xhr.abort();
-							bug(message, length);
+							bug(error.message, lastBufferLength);
 							return send(sendBytes, pauseAfter);
 						}
 						var textLength = patialText.length;

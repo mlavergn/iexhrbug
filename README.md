@@ -6,7 +6,7 @@ The project contains basic javascript XHR client code, and a basic HTTPS server 
 
 ## Details
 
-In IE11, when asynchronous HTTPS XMLHttpRequest responseText's length exceeds a threshold (~60MB < X < ~128MB), IE11 will throw the following exception:
+In IE11, when asynchronous HTTPS XMLHttpRequest responseText's length exceeds a threshold of ~9MB (9,600,000 bytes), IE11 will throw the following exception:
 
 ```text
   ERROR Error: Not enough storage is available to complete this operation.

@@ -1,16 +1,14 @@
 # IE XMLHttpRequest bug
 
-This project is a proof of concept for and existing IE11 XMLHttpRequest responseText bug.
+This project is a proof of concept for an existing IE11 HTTPS XMLHttpRequest responseText length bug.
 
-The project contains basic javascript XHR client code, and a simple HTTP server designed to fill the XMLHttpRequest channel with large amounts of text data.
+The project contains basic javascript XHR client code, and a basic HTTPS server designed to fill the XMLHttpRequest channel with large amounts of text data.
+
+## Details
+
+In IE11, when asynchronous HTTPS XMLHttpRequest responseText's length exceeds a threshold (~60MB < X < ~128MB), IE11 will throw the following exception:
 
 ```text
-IE11 XHR.responseText bug
---
-
-In IE11, when an asynchronous XMLHttpRequest responseText content length exceeds an unknown threshold (~60MB), IE11 will throw the following exception:
-
-
   ERROR Error: Not enough storage is available to complete this operation.
 
   objectError = {
@@ -21,11 +19,11 @@ In IE11, when an asynchronous XMLHttpRequest responseText content length exceeds
     stack: "Error: Not enough storage is available to complete this operation.",
     Symbol: rxSubscriber
   }
-
+```
 
 This behavior does not confirm to W3C XHR specifications which make no provisions for exceptions in asynchronous XHR requests. Only synchronous XHR requests are permitted to throw exceptions:
 
-https://xhr.spec.whatwg.org
+[XHR Spec](https://xhr.spec.whatwg.org)
 
 ## Affected Frameworks
 
@@ -33,7 +31,7 @@ As a result, RxJS and Angular do not trap or bubble up the exception. The top le
 
 Here is the specific problem line for Angular 6:
 
-https://github.com/angular/angular/blob/6.0.x/packages/common/http/src/xhr.ts#L274
+[Angular 6 Src](https://github.com/angular/angular/blob/6.0.x/packages/common/http/src/xhr.ts#L274)
 
 ```typescript
 if (req.responseType === 'text' && !!xhr.responseText) {
@@ -52,10 +50,20 @@ if (req.responseType === 'text' && !!xhr.responseText) {
 }
 ```
 
+For non-Angular, the following should allow the browser to recover:
+
+```javascript
+xhr.onreadystatechange = function () {
++  try {
+     const text = xhr.responseText;
++  } catch (error) {
++    xhr.abort();
++    return;
++  }
+}
+```
+
 ## Reports
 
-```text
-https://stackoverflow.com/search?q=responseText+%22Not+enough+storage+is+available+to+complete+this+operation%22
-
-https://github.com/jquery/jquery/issues/3499
-```
+- [StackOverflow](https://stackoverflow.com/search?q=responseText+%22Not+enough+storage+is+available+to+complete+this+operation%22)
+- [jQuery](https://github.com/jquery/jquery/issues/3499)

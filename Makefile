@@ -35,8 +35,8 @@ run: build
 test:
 	open "http://localhost:8000"
 
-
 release:
+	zip main.exe.zip main.exe
 	hub release create -m "${VERSION} - iexhrbug" -a main.exe.zip -t master "v${VERSION}"
 	open "https://github.com/mlavergn/iexhrbug/releases"
 

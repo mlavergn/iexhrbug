@@ -15,7 +15,28 @@ import (
 
 // TestCase export
 type TestCase struct {
-	Pack *gopack.Pack
+	Pack           *gopack.Pack
+	bugReports     []BugReport
+	browserReports map[string]BrowserReport
+	serviceReports map[string]ServiceReport
+}
+
+// NewTestCase export
+func NewTestCase() *TestCase {
+	id := &TestCase{
+		bugReports:     []BugReport{},
+		browserReports: map[string]BrowserReport{},
+		serviceReports: map[string]ServiceReport{},
+	}
+
+	pack := gopack.NewPack()
+	_, err := pack.Load()
+	if err == nil {
+		fmt.Println("[Binary packed assets loaded]")
+		id.Pack = pack
+	}
+
+	return id
 }
 
 // EventSourcePayload type
@@ -56,7 +77,23 @@ func (id *TestCase) handlerStatic(resp http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (id *TestCase) handlerData(resp http.ResponseWriter, req *http.Request) {
+// ServiceReport type
+type ServiceReport struct {
+	Bytes      int   `json:"bytes"`
+	Payloads   int   `json:"payloads"`
+	ReportTime int64 `json:"reportTime"`
+}
+
+// NewServiceStatus export
+func NewServiceStatus(bytes int, payloads int) ServiceReport {
+	return ServiceReport{
+		Bytes:      bytes,
+		Payloads:   payloads,
+		ReportTime: time.Now().UnixNano() / 1000000,
+	}
+}
+
+func (id *TestCase) handlerEvents(resp http.ResponseWriter, req *http.Request) {
 	// fmt.Println("handlerData")
 	resp.Header().Set("Access-Control-Allow-Origin", "*")
 	resp.Header().Set("Content-Type", "text/event-stream")
@@ -69,7 +106,9 @@ func (id *TestCase) handlerData(resp http.ResponseWriter, req *http.Request) {
 	sendBytes, _ := strconv.Atoi(req.URL.Query().Get("sendBytes"))
 	pauseAfter, _ := strconv.Atoi(req.URL.Query().Get("pauseAfter"))
 
-	fmt.Printf("Sending %d bytes, flushing every %d sends\n", sendBytes, pauseAfter)
+	agent := id.parseAgent(req.UserAgent())
+
+	fmt.Printf("Agent %s sending %d bytes, flushing every %d sends\n", agent, sendBytes, pauseAfter)
 
 	payload := &EventSourcePayload{
 		Type:        "message",
@@ -110,7 +149,7 @@ func (id *TestCase) handlerData(resp http.ResponseWriter, req *http.Request) {
 
 		pause -= payloadLen
 		if pause <= 0 {
-			// fmt.Printf("Agent [%s] payloads sent %d / bytes sent %d\n", agent, payloadsSent, bytesSent)
+			id.serviceReports[agent] = NewServiceStatus(bytesSent, payloadsSent)
 			time.Sleep(1000 * time.Millisecond)
 			pause = pauseAfter
 		}
@@ -119,8 +158,8 @@ func (id *TestCase) handlerData(resp http.ResponseWriter, req *http.Request) {
 	fmt.Printf("Test complete, sent %d / bytes sent %d\n", payloadsSent, bytesSent)
 }
 
-// Report type
-type Report struct {
+// BrowserReport type
+type BrowserReport struct {
 	Bytes       int `json:"bytes"`
 	Chunks      int `json:"chunks"`
 	PayloadTime int `json:"payloadTime"`
@@ -134,16 +173,17 @@ func (id *TestCase) handlerReport(resp http.ResponseWriter, req *http.Request) {
 	data, _ := ioutil.ReadAll(req.Body)
 	defer req.Body.Close()
 
-	var report Report
+	var report BrowserReport
 	json.Unmarshal(data, &report)
 	agent := id.parseAgent(req.UserAgent())
+	id.browserReports[agent] = report
 	fmt.Println("Agent: ", agent, " | Buffer: ", report.Bytes, " bytes | Lag: ", report.BrowserTime-report.PayloadTime, " ms")
 
 	resp.Write([]byte("OK"))
 }
 
-// Bug type
-type Bug struct {
+// BugReport type
+type BugReport struct {
 	Error       string `json:"error"`
 	Bytes       int    `json:"bytes"`
 	BrowserTime int    `json:"browserTime"`
@@ -156,12 +196,43 @@ func (id *TestCase) handlerBug(resp http.ResponseWriter, req *http.Request) {
 	data, _ := ioutil.ReadAll(req.Body)
 	defer req.Body.Close()
 
-	var bug Bug
+	var bug BugReport
 	json.Unmarshal(data, &bug)
+	id.bugReports = append(id.bugReports, bug)
 	agent := id.parseAgent(req.UserAgent())
 	fmt.Println("!!!EXCEPTION!!! Agent: ", agent, " | Error: ", bug.Error, "Buffer: ", bug.Bytes, " bytes | Time: ", bug.BrowserTime, " ms")
 
 	resp.Write([]byte("OK"))
+}
+
+func (id *TestCase) handlerResults(resp http.ResponseWriter, req *http.Request) {
+	// fmt.Println("handlerResult")
+
+	bugData, bugErr := json.Marshal(id.bugReports)
+	if bugErr != nil {
+		resp.Write([]byte("OK"))
+		return
+	}
+
+	svcData, svcErr := json.Marshal(id.serviceReports)
+	if svcErr != nil {
+		resp.Write([]byte("OK"))
+		return
+	}
+
+	progData, progErr := json.Marshal(id.browserReports)
+	if progErr != nil {
+		resp.Write([]byte("OK"))
+		return
+	}
+
+	resp.Header().Set("Content-Type", "text/plain")
+	resp.WriteHeader(http.StatusOK)
+	resp.Write(bugData)
+	resp.Write([]byte("\n\n"))
+	resp.Write(svcData)
+	resp.Write([]byte("\n\n"))
+	resp.Write(progData)
 }
 
 func (id *TestCase) parseAgent(userAgent string) string {
@@ -192,30 +263,25 @@ func (id *TestCase) updateSpinner(frame *int) {
 }
 
 func main() {
-	fmt.Println("IE11 bug proof of concept")
+	port := "8000"
+	fmt.Println("IE11 bug proof of concept on port " + port)
 
-	tc := &TestCase{}
+	id := NewTestCase()
 
-	pack := gopack.NewPack()
-	_, err := pack.Load()
-	if err == nil {
-		fmt.Println("Found packed assets")
-		tc.Pack = pack
-	}
-
-	http.Handle("/", http.HandlerFunc(tc.handlerStatic))
-	http.Handle("/events", http.HandlerFunc(tc.handlerData))
-	http.Handle("/report", http.HandlerFunc(tc.handlerReport))
-	http.Handle("/bug", http.HandlerFunc(tc.handlerBug))
+	http.Handle("/", http.HandlerFunc(id.handlerStatic))
+	http.Handle("/events", http.HandlerFunc(id.handlerEvents))
+	http.Handle("/report", http.HandlerFunc(id.handlerReport))
+	http.Handle("/bug", http.HandlerFunc(id.handlerBug))
+	http.Handle("/results", http.HandlerFunc(id.handlerResults))
 
 	// Start the server and listen forever on port 8000.
 	// http.ListenAndServe(":8000", nil)
 
-	cert, _ := pack.File("iexhr.crt")
+	cert, _ := id.Pack.File("iexhr.crt")
 	defer os.Remove(*cert)
-	key, _ := pack.File("iexhr.key")
+	key, _ := id.Pack.File("iexhr.key")
 	defer os.Remove(*key)
-	err = http.ListenAndServeTLS(":8000", *cert, *key, nil)
+	err := http.ListenAndServeTLS(":"+port, *cert, *key, nil)
 	if err != nil {
 		fmt.Println("Failed to start listener", err)
 	}
